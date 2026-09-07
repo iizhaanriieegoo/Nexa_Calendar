@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function isMember(calendarId) {
+      return signedIn() && exists(/databases/$(database)/documents/calendars/$(calendarId)/members/$(request.auth.uid));
+    }
+
+    match /users/{uid} {
+      allow read, write: if isSelf(uid);
+    }
+
+    match /calendars/{calendarId} {
+      allow read: if isMember(calendarId);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isMember(calendarId) && resource.data.ownerUid == request.auth.uid;
+
+      match /members/{uid} {
+        allow read: if isSelf(uid) || isMember(calendarId);
+        allow create: if isSelf(uid) && signedIn() &&
+          exists(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode)) &&
+          get(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode)).data.calendarId == calendarId;
+        allow delete: if isSelf(uid) || (isMember(calendarId) && get(/databases/$(database)/documents/calendars/$(calendarId)).data.ownerUid == request.auth.uid);
+      }
+
+      match /events/{eventId} {
+        allow read, write: if isMember(calendarId);
+      }
+    }
+
+    match /invites/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+  }
+}
