@@ -51,12 +51,12 @@
 </div>
 <div id="registerPanel" class="hidden">
   <h1>Crear cuenta</h1>
-  <p>Crea tu cuenta con tus datos o continúa con Google. El botón de Google abrirá el selector de cuentas para elegir una cuenta existente o usar otra.</p>
+  <p>Crea tu cuenta con tus datos o continúa con Google.</p>
   <div class="auth-form">
     <label>Nombre<input id="profileName" autocomplete="name" placeholder="Tu nombre"></label>
     <label>Empresa <span style="color:#9aa1af">(opcional)</span><input id="profileCompany" autocomplete="organization" placeholder="Nombre de la empresa"></label>
     <label>Número de teléfono<input id="phone" autocomplete="tel" placeholder="+34 612 345 678"></label>
-    <label>Email <span style="color:#9aa1af">(necesario para cuenta manual)</span><input id="registerEmail" type="email" autocomplete="email" placeholder="tu@email.com"></label>
+    <label>Email <span style="color:#9aa1af">(opcional)</span><input id="registerEmail" type="email" autocomplete="email" placeholder="tu@email.com"></label>
     <label>Contraseña<input id="registerPassword" type="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres"></label>
   </div>
   <button class="btn primary back-btn" onclick="manualRegister()">Crear cuenta</button>
@@ -64,6 +64,25 @@
   <button class="google-btn" onclick="googleRegister()"><span class="google-icon"><svg class="google-logo-svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.27c0-.68-.06-1.33-.17-1.96H12v3.71h5.22a4.46 4.46 0 0 1-1.94 2.93v2.43h3.14c1.84-1.69 2.93-4.18 2.93-7.11Z"/><path fill="#34A853" d="M12 21.75c2.63 0 4.84-.87 6.45-2.37l-3.14-2.43c-.87.58-1.98.93-3.31.93-2.54 0-4.69-1.72-5.46-4.03H3.3v2.5A9.75 9.75 0 0 0 12 21.75Z"/><path fill="#FBBC05" d="M6.54 13.85A5.86 5.86 0 0 1 6.23 12c0-.64.11-1.26.31-1.85v-2.5H3.3A9.75 9.75 0 0 0 2.25 12c0 1.57.38 3.06 1.05 4.35l3.24-2.5Z"/><path fill="#EA4335" d="M12 6.12c1.43 0 2.71.49 3.72 1.46l2.79-2.79C16.83 3.2 14.63 2.25 12 2.25A9.75 9.75 0 0 0 3.3 7.65l3.24 2.5C7.31 7.84 9.46 6.12 12 6.12Z"/></svg></span> Crear cuenta con Google</button>
   <p class="auth-note">Al crearla con Google, Google se encargará de seleccionar y verificar tu cuenta.</p>
   <button class="btn back-btn" onclick="showAuthChoice()">← Volver</button>
+</div>
+<div id="verifyPanel" class="hidden">
+  <h1>Verifica tu cuenta</h1>
+  <p>Tu cuenta ya está creada. Elige cómo quieres verificarla antes de entrar en NEXA.</p>
+  <div class="auth-actions" style="display:grid;gap:10px;margin-top:18px">
+    <button class="btn primary" onclick="chooseEmailVerification()">✉️ Verificar con Gmail</button>
+    <button class="btn" onclick="chooseSmsVerification()">📱 Verificar con SMS</button>
+  </div>
+  <div id="emailVerifyBox" class="hidden auth-success">Te enviaremos un correo de verificación. Después de pulsar el enlace, vuelve aquí y pulsa <b>Comprobar verificación</b>.</div>
+  <div id="smsVerifyBox" class="hidden">
+    <div class="auth-form">
+      <label>Código SMS<input id="smsCode" inputmode="numeric" autocomplete="one-time-code" placeholder="Código de 6 dígitos"></label>
+    </div>
+    <div id="recaptcha-container"></div>
+    <button class="btn primary back-btn" onclick="sendVerificationSms()">Enviar código por SMS</button>
+    <button id="confirmSmsBtn" class="btn primary back-btn hidden" onclick="confirmVerificationSms()">Verificar código</button>
+  </div>
+  <button id="checkEmailBtn" class="btn primary back-btn hidden" onclick="checkEmailVerification()">Comprobar verificación</button>
+  <button class="btn back-btn" onclick="cancelVerification()">Cerrar sesión</button>
 </div>
 <p id="authStatus" class="status"></p>
 <p style="font-size:12px;color:#9aa1af">NEXA no guarda tu contraseña de Google. Google gestiona el acceso de forma segura.</p>
@@ -80,46 +99,71 @@ const initialEvents=[{id:1,title:'Reunión de equipo',date:'2026-09-08',time:'10
 let events=[],sharedCalendars=[],activeCalendarId=null,cursor=new Date(),editingId=null,notified={},currentUser=null,db=null,confirmation=null,recaptcha=null,confirmationResult=null,deferredInstallPrompt=null;
 const pad=n=>String(n).padStart(2,'0'),key=(y,m,d)=>`${y}-${pad(m+1)}-${pad(d)}`;
 function configured(){return window.NEXA_FIREBASE_CONFIG&&window.NEXA_FIREBASE_CONFIG.apiKey&&!String(window.NEXA_FIREBASE_CONFIG.apiKey).includes('REPLACE_ME')}
-function initFirebase(){if(!configured()){showAuth();setAuthStatus('Firebase todavía no está configurado. Puedes navegar por el formulario, pero para crear/iniciar cuentas debes completar firebase-config.js.');return false}try{if(!firebase.apps.length)firebase.initializeApp(window.NEXA_FIREBASE_CONFIG);db=firebase.firestore();handleGoogleRedirect();firebase.auth().onAuthStateChanged(async u=>{if(u){currentUser=u;await ensureProfile(u);await ensurePersonalCalendar(u.uid);await loadCloudData();showApp()}else{currentUser=null;showAuth()}});return true}catch(e){showAuth();setAuthStatus('No se pudo iniciar el servicio de cuentas: '+e.message);return false}}
+function initFirebase(){
+  if(!configured()){showAuth();setAuthStatus('Configura firebase-config.js para activar las cuentas y calendarios compartidos.');return false}
+  try{
+    if(!firebase.apps.length)firebase.initializeApp(window.NEXA_FIREBASE_CONFIG);
+    db=firebase.firestore();
+    firebase.auth().setLanguageCode('es');
+    firebase.auth().onAuthStateChanged(async u=>{
+      if(u){
+        currentUser=u;
+        try{
+          await ensureProfile(u);
+          if(localStorage.getItem('nexa_needs_verification')==='1' && u.providerData.some(p=>p.providerId==='password')){
+            showVerification();
+            return;
+          }
+          await ensurePersonalCalendar(u.uid);
+          await loadCloudData();
+          showApp();
+        }catch(e){
+          console.error(e);
+          setAuthStatus('La cuenta está iniciada, pero no se pudo cargar NEXA: '+(e.message||e));
+        }
+      }else{currentUser=null;showAuth()}
+    });
+    return true
+  }catch(e){showAuth();setAuthStatus('No se pudo iniciar el servicio de cuentas: '+e.message);return false}
+}
 function showAuth(){document.getElementById('authScreen').classList.remove('hidden');document.getElementById('appShell').classList.add('hidden');showAuthChoice()}
-function showApp(){document.getElementById('authScreen').classList.add('hidden');document.getElementById('appShell').classList.remove('hidden');renderSide();render();}
-function showAuthChoice(){document.getElementById('authChoice').classList.remove('hidden');document.getElementById('loginPanel').classList.add('hidden');document.getElementById('registerPanel').classList.add('hidden');setAuthStatus('')}
-function showLogin(){document.getElementById('authChoice').classList.add('hidden');document.getElementById('loginPanel').classList.remove('hidden');document.getElementById('registerPanel').classList.add('hidden');document.getElementById('manualLoginStep1').classList.remove('hidden');document.getElementById('manualLoginStep2').classList.add('hidden');setAuthStatus('')}
-function showRegister(){document.getElementById('authChoice').classList.add('hidden');document.getElementById('loginPanel').classList.add('hidden');document.getElementById('registerPanel').classList.remove('hidden');setAuthStatus('')}
+function showApp(){document.getElementById('authScreen').classList.add('hidden');document.getElementById('appShell').classList.remove('hidden');renderSide();render()}
+function showAuthChoice(){document.getElementById('authChoice').classList.remove('hidden');document.getElementById('loginPanel').classList.add('hidden');document.getElementById('registerPanel').classList.add('hidden');document.getElementById('verifyPanel').classList.add('hidden');setAuthStatus('')}
+function showLogin(){document.getElementById('authChoice').classList.add('hidden');document.getElementById('loginPanel').classList.remove('hidden');document.getElementById('registerPanel').classList.add('hidden');document.getElementById('verifyPanel').classList.add('hidden');document.getElementById('manualLoginStep1').classList.remove('hidden');document.getElementById('manualLoginStep2').classList.add('hidden');setAuthStatus('')}
+function showRegister(){document.getElementById('authChoice').classList.add('hidden');document.getElementById('loginPanel').classList.add('hidden');document.getElementById('registerPanel').classList.remove('hidden');document.getElementById('verifyPanel').classList.add('hidden');setAuthStatus('')}
 function setAuthStatus(s){document.getElementById('authStatus').textContent=s||''}
 async function saveGoogleProfile(u,mode){const name=(document.getElementById('profileName')?.value||'').trim()||u.displayName||u.email?.split('@')[0]||'Usuario';const company=(document.getElementById('profileCompany')?.value||'').trim();const phone=(document.getElementById('phone')?.value||'').trim();await db.collection('users').doc(u.uid).set({name,company,phone,email:u.email||'',photoURL:u.photoURL||'',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});localStorage.removeItem('nexa_google_profile_draft')}
 async function manualRegister(){
   if(!configured()){setAuthStatus('Configura Firebase primero.');return}
-  const name=document.getElementById('profileName').value.trim();
-  const company=document.getElementById('profileCompany').value.trim();
-  const phone=document.getElementById('phone').value.trim();
-  const email=document.getElementById('registerEmail').value.trim().toLowerCase();
-  const password=document.getElementById('registerPassword').value;
+  const name=document.getElementById('profileName').value.trim(),company=document.getElementById('profileCompany').value.trim(),phone=document.getElementById('phone').value.trim(),email=document.getElementById('registerEmail').value.trim().toLowerCase(),password=document.getElementById('registerPassword').value;
   if(!name){setAuthStatus('Escribe tu nombre.');return}
   if(!phone){setAuthStatus('Escribe tu número de teléfono.');return}
-  if(!email){setAuthStatus('Para una cuenta manual con contraseña necesitamos un email. Si no quieres usar email, elige Crear cuenta con Google o la opción de teléfono cuando la activemos.');return}
+  if(!email){setAuthStatus('Para una cuenta manual con contraseña necesitamos un email.');return}
   if(password.length<6){setAuthStatus('La contraseña debe tener al menos 6 caracteres.');return}
   try{
     setAuthStatus('Creando tu cuenta...');
     const cred=await firebase.auth().createUserWithEmailAndPassword(email,password);
     await db.collection('users').doc(cred.user.uid).set({name,company,phone,email,photoURL:'',updatedAt:firebase.firestore.FieldValue.serverTimestamp(),createdAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
-    await ensurePersonalCalendar(cred.user.uid);setAuthStatus('Cuenta creada correctamente.');
+    await ensurePersonalCalendar(cred.user.uid);
+    localStorage.setItem('nexa_needs_verification','1');
+    showVerification();
   }catch(e){setAuthStatus(firebaseAuthError(e))}
 }
-function firebaseAuthError(e){const m={
- 'auth/email-already-in-use':'Ese email ya tiene una cuenta.',
- 'auth/invalid-email':'El email no es válido.',
- 'auth/weak-password':'La contraseña es demasiado débil.',
- 'auth/invalid-credential':'El email o la contraseña no son correctos.',
- 'auth/user-not-found':'No existe una cuenta con ese email.',
- 'auth/wrong-password':'La contraseña no es correcta.'};return m[e?.code]||('No se pudo completar la operación: '+(e?.message||'error desconocido'))}
+function firebaseAuthError(e){const m={'auth/email-already-in-use':'Ese email ya tiene una cuenta.','auth/invalid-email':'El email no es válido.','auth/weak-password':'La contraseña es demasiado débil.','auth/invalid-credential':'El email o la contraseña no son correctos.','auth/user-not-found':'No existe una cuenta con ese email.','auth/wrong-password':'La contraseña no es correcta.','auth/popup-closed-by-user':'Has cerrado la ventana de Google.','auth/popup-blocked':'El navegador ha bloqueado la ventana de Google. Permite ventanas emergentes para NEXA.','auth/account-exists-with-different-credential':'Ese email ya está asociado a otro método de acceso.'};return m[e?.code]||('No se pudo completar la operación: '+(e?.message||'error desconocido'))}
 function continueManualLogin(){const value=document.getElementById('loginIdentifier').value.trim();if(!value){setAuthStatus('Escribe tu email o número de teléfono.');return}if(value.startsWith('+')||/^\d[\d\s-]{7,}$/.test(value)){setAuthStatus('Las cuentas con número de teléfono necesitan verificación por SMS. Para entrar con contraseña, usa el email asociado.');return}document.getElementById('manualLoginStep1').classList.add('hidden');document.getElementById('manualLoginStep2').classList.remove('hidden');document.getElementById('loginPassword').focus();setAuthStatus('Introduce tu contraseña.')}
 function backManualLogin(){document.getElementById('manualLoginStep2').classList.add('hidden');document.getElementById('manualLoginStep1').classList.remove('hidden');setAuthStatus('')}
-async function manualLogin(){const email=document.getElementById('loginIdentifier').value.trim().toLowerCase();const password=document.getElementById('loginPassword').value;if(!email||!password){setAuthStatus('Completa email y contraseña.');return}try{setAuthStatus('Iniciando sesión...');await firebase.auth().signInWithEmailAndPassword(email,password)}catch(e){setAuthStatus(firebaseAuthError(e))}}
+async function manualLogin(){const email=document.getElementById('loginIdentifier').value.trim().toLowerCase(),password=document.getElementById('loginPassword').value;if(!email||!password){setAuthStatus('Completa email y contraseña.');return}try{setAuthStatus('Iniciando sesión...');const cred=await firebase.auth().signInWithEmailAndPassword(email,password);await cred.user.reload();if(!cred.user.emailVerified){currentUser=cred.user;localStorage.setItem('nexa_needs_verification','1');showVerification();return}localStorage.removeItem('nexa_needs_verification');setAuthStatus('Sesión iniciada. Cargando NEXA...');}catch(e){setAuthStatus(firebaseAuthError(e))}}
 function googleProvider(){const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});return provider}
-async function googleLogin(){if(!configured()){setAuthStatus('Configura Firebase primero.');return}try{setAuthStatus('Abriendo selector de cuentas de Google...');await firebase.auth().signInWithPopup(googleProvider())}catch(e){setAuthStatus('No se pudo abrir Google: '+e.message)}}
-async function googleRegister(){if(!configured()){setAuthStatus('Configura Firebase primero.');return}const draft={name:document.getElementById('profileName').value.trim(),company:document.getElementById('profileCompany').value.trim(),phone:document.getElementById('phone').value.trim()};localStorage.setItem('nexa_google_mode','register');localStorage.setItem('nexa_google_profile_draft',JSON.stringify(draft));try{setAuthStatus('Abriendo selector de cuentas de Google...');await firebase.auth().signInWithPopup(googleProvider())}catch(e){setAuthStatus('No se pudo abrir Google: '+e.message)}}
-async function handleGoogleRedirect(){try{const result=await firebase.auth().getRedirectResult();if(result&&result.user){const mode=localStorage.getItem('nexa_google_mode')||'login';if(mode==='register'){const draft=JSON.parse(localStorage.getItem('nexa_google_profile_draft')||'{}');await db.collection('users').doc(result.user.uid).set({name:draft.name||result.user.displayName||result.user.email?.split('@')[0]||'Usuario',company:draft.company||'',phone:draft.phone||'',email:result.user.email||'',photoURL:result.user.photoURL||'',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});localStorage.removeItem('nexa_google_profile_draft')}localStorage.removeItem('nexa_google_mode')}}catch(e){if(e&&e.code)setAuthStatus('No se pudo iniciar sesión con Google: '+e.message)}}
+async function googleLogin(){if(!configured()){setAuthStatus('Configura Firebase primero.');return}try{setAuthStatus('Abriendo Google...');const result=await firebase.auth().signInWithPopup(googleProvider());if(result&&result.user){await ensureProfile(result.user);setAuthStatus('Google verificado. Cargando NEXA...')}}catch(e){setAuthStatus('No se pudo iniciar sesión con Google: '+(firebaseAuthError(e)||e.message))}}
+async function googleRegister(){if(!configured()){setAuthStatus('Configura Firebase primero.');return}try{setAuthStatus('Abriendo Google...');const result=await firebase.auth().signInWithPopup(googleProvider());if(result&&result.user){await saveGoogleProfile(result.user,'register');await ensurePersonalCalendar(result.user.uid);setAuthStatus('Cuenta de Google creada. Cargando NEXA...')}}catch(e){setAuthStatus('No se pudo crear la cuenta con Google: '+(firebaseAuthError(e)||e.message))}}
+function showVerification(){document.getElementById('authChoice').classList.add('hidden');document.getElementById('loginPanel').classList.add('hidden');document.getElementById('registerPanel').classList.add('hidden');document.getElementById('verifyPanel').classList.remove('hidden');document.getElementById('emailVerifyBox').classList.add('hidden');document.getElementById('smsVerifyBox').classList.add('hidden');document.getElementById('checkEmailBtn').classList.add('hidden');setAuthStatus('Elige un método de verificación.');}
+async function chooseEmailVerification(){try{const u=firebase.auth().currentUser;if(!u||!u.email){setAuthStatus('Esta cuenta no tiene email para verificar.');return}await u.sendEmailVerification();document.getElementById('emailVerifyBox').classList.remove('hidden');document.getElementById('checkEmailBtn').classList.remove('hidden');setAuthStatus('Te hemos enviado el correo. Revisa también Spam o Promociones.')}catch(e){setAuthStatus('No se pudo enviar el correo: '+(e.message||e))}}
+async function checkEmailVerification(){try{const u=firebase.auth().currentUser;if(!u)return;await u.reload();if(u.emailVerified){localStorage.removeItem('nexa_needs_verification');setAuthStatus('Email verificado. Entrando en NEXA...');await ensurePersonalCalendar(u.uid);await loadCloudData();showApp()}else setAuthStatus('Todavía no aparece como verificado. Pulsa el enlace del correo y vuelve a intentarlo.')}catch(e){setAuthStatus('No se pudo comprobar la verificación: '+(e.message||e))}}
+function prepareRecaptcha(){if(recaptcha){try{recaptcha.clear()}catch(_){}recaptcha=null}recaptcha=new firebase.auth.RecaptchaVerifier('recaptcha-container',{size:'normal',callback:()=>setAuthStatus('reCAPTCHA completado. Ya puedes enviar el SMS.')});return recaptcha}
+function chooseSmsVerification(){document.getElementById('emailVerifyBox').classList.add('hidden');document.getElementById('checkEmailBtn').classList.add('hidden');document.getElementById('smsVerifyBox').classList.remove('hidden');document.getElementById('confirmSmsBtn').classList.add('hidden');setAuthStatus('Pulsa Enviar código por SMS y completa el reCAPTCHA.');setTimeout(()=>{try{prepareRecaptcha()}catch(e){setAuthStatus('No se pudo preparar el reCAPTCHA: '+e.message)}},50)}
+async function sendVerificationSms(){try{const u=firebase.auth().currentUser;const phone=(document.getElementById('phone')?.value||'').trim()||((await db.collection('users').doc(u.uid).get()).data()?.phone||'').trim();if(!phone){setAuthStatus('No hay un número de teléfono guardado en esta cuenta.');return}if(!recaptcha)prepareRecaptcha();setAuthStatus('Enviando código SMS...');confirmationResult=await u.linkWithPhoneNumber(phone,recaptcha);document.getElementById('confirmSmsBtn').classList.remove('hidden');setAuthStatus('Código enviado. Escríbelo arriba.')}catch(e){setAuthStatus('No se pudo enviar el SMS: '+(e.message||e))}}
+async function confirmVerificationSms(){try{const code=document.getElementById('smsCode').value.trim();if(!confirmationResult||!code){setAuthStatus('Escribe el código SMS recibido.');return}await confirmationResult.confirm(code);localStorage.removeItem('nexa_needs_verification');setAuthStatus('Teléfono verificado. Entrando en NEXA...');await firebase.auth().currentUser.reload();await ensurePersonalCalendar(firebase.auth().currentUser.uid);await loadCloudData();showApp()}catch(e){setAuthStatus('Código incorrecto o no se pudo verificar: '+(e.message||e))}}
+function cancelVerification(){firebase.auth().signOut();localStorage.removeItem('nexa_needs_verification');showAuthChoice()}
 async function ensureProfile(u){const ref=db.collection('users').doc(u.uid),snap=await ref.get();if(!snap.exists){await ref.set({name:u.displayName||u.email?.split('@')[0]||'Usuario',company:'',phone:'',email:u.email||'',photoURL:u.photoURL||'',createdAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});document.getElementById('sideName').textContent=u.displayName||'Usuario';}else{const p=snap.data();document.getElementById('sideName').textContent=p.name||u.displayName||'Usuario';document.getElementById('sideCompany').textContent=p.company||'';}}
 async function signOut(){await firebase.auth().signOut();location.reload()}
 function localEvents(){try{const keys=['nexa_events_v6','nexa_events_v5','nexa_events_v4','nexa_events_v3','nexa_events_v2'];for(const k of keys){const raw=localStorage.getItem(k);if(raw){const x=JSON.parse(raw);if(Array.isArray(x)&&x.length)return x}}}catch(_){}return initialEvents.map(e=>({...e}))}
