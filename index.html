@@ -104,7 +104,7 @@ function initFirebase(){
   try{
     if(!firebase.apps.length)firebase.initializeApp(window.NEXA_FIREBASE_CONFIG);
     db=firebase.firestore();
-    firebase.auth().languageCode='es';
+    firebase.auth().setLanguageCode('es');
     firebase.auth().onAuthStateChanged(async u=>{
       if(u){
         currentUser=u;
